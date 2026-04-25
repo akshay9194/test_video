@@ -1,0 +1,32 @@
+FROM nvidia/cuda:12.4.1-devel-ubuntu22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PYTHONUNBUFFERED=1
+ENV MODEL_PATH=/workspace/ckpts
+
+# System dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3.10 python3-pip python3.10-venv \
+    git wget curl ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN ln -sf /usr/bin/python3.10 /usr/bin/python && \
+    ln -sf /usr/bin/pip3 /usr/bin/pip
+
+WORKDIR /app
+
+# Install Python dependencies (cached layer)
+COPY requirements.txt .
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt && \
+    pip install --no-cache-dir runpod
+
+# Copy application code
+COPY . .
+
+# Models loaded from network volume at /workspace/ckpts (not baked in)
+# This keeps the Docker image small (~5 GB instead of ~55 GB)
+
+EXPOSE 8080
+
+CMD ["python", "runpod_handler.py"]
