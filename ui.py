@@ -140,8 +140,9 @@ def ensure_pipeline():
 
 # --- Gradio Handlers ---
 
-def generate_video(script, duration, style, aspect_ratio, voice, music_prompt,
-                   add_captions, add_music, seed, progress=gr.Progress(track_tqdm=True)):
+def generate_video(script, duration, style, aspect_ratio, avatar_image, ref_images,
+                   voice, music_prompt, add_captions, add_music, seed,
+                   progress=gr.Progress(track_tqdm=True)):
     ensure_pipeline()
 
     progress_log = []
@@ -155,11 +156,18 @@ def generate_video(script, duration, style, aspect_ratio, voice, music_prompt,
             line += f" ({elapsed:.1f}s)"
         progress_log.append(line)
 
+    # Collect reference image paths
+    image_paths = None
+    if ref_images:
+        image_paths = [f.name if hasattr(f, 'name') else f for f in ref_images]
+
     request = VideoRequest(
         script=script,
         total_duration_sec=int(duration),
         style=style,
         aspect_ratio=aspect_ratio,
+        avatar_image=avatar_image,
+        images=image_paths,
         voice=voice if voice else None,
         music_prompt=music_prompt,
         add_captions=add_captions,
@@ -242,6 +250,17 @@ with gr.Blocks(
                     label="Aspect Ratio",
                 )
 
+            with gr.Accordion("Images & Avatar", open=False):
+                avatar_input = gr.Image(
+                    label="Avatar Image (for talking head scenes)",
+                    type="filepath",
+                )
+                images_input = gr.File(
+                    label="Reference Images (for image-to-video scenes)",
+                    file_count="multiple",
+                    file_types=["image"],
+                )
+
             voice_input = gr.Textbox(
                 label="TTS Voice (optional)",
                 placeholder="en-US-JennyNeural (leave blank for default)",
@@ -278,6 +297,7 @@ with gr.Blocks(
     generate_btn.click(
         fn=generate_video,
         inputs=[script_input, duration_input, style_input, aspect_input,
+                avatar_input, images_input,
                 voice_input, music_prompt, captions_check, music_check, seed_input],
         outputs=[video_output, log_output, timings_output, monitor_output, summary_output],
     )
