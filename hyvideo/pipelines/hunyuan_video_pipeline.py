@@ -1178,7 +1178,7 @@ class HunyuanVideo_1_5_Pipeline(DiffusionPipeline):
         cond_latents = self._prepare_cond_latents(
             task_type, image_cond, latents, multitask_mask
         )
-        with auto_offload_model(self.vision_encoder, self.execution_device, enabled=self.enable_offloading):
+        with auto_offload_model(self.vision_encoder, self.execution_device, enabled=self.enable_offloading and self.vision_encoder is not None):
             vision_states = self._prepare_vision_states(
                 semantic_images_np, target_resolution, latents, device
             )
@@ -1607,9 +1607,12 @@ class HunyuanVideo_1_5_Pipeline(DiffusionPipeline):
     def _load_vision_encoder(cls, pretrained_model_name_or_path, device):
         vision_encoder_path = f'{pretrained_model_name_or_path}/vision_encoder/siglip'
         if not os.path.exists(vision_encoder_path):
-            msg = f"{vision_encoder_path} not found. Please refer to checkpoints-download.md to download the vision encoder checkpoints."
-            loguru.logger.error(msg)
-            raise FileNotFoundError(msg)
+            loguru.logger.warning(
+                f"{vision_encoder_path} not found. Vision encoder will not be loaded. "
+                f"Image-to-video (I2V) will not be available. "
+                f"To enable I2V, download the vision encoder per checkpoints-download.md."
+            )
+            return None
         vision_encoder = VisionEncoder(
             vision_encoder_type="siglip",
             vision_encoder_precision="fp16",
