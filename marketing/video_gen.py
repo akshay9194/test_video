@@ -6,13 +6,29 @@ Wraps the existing generate.py pipeline into a callable Python API.
 
 import os
 import sys
-import tempfile
+import threading
 import torch
 import copy
 from loguru import logger
 
 # Ensure parent package is importable
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+# Initialize parallel state ONCE at module level (must happen before any threads)
+_init_done = False
+_init_lock = threading.Lock()
+
+def _ensure_init():
+    global _init_done
+    if _init_done:
+        return
+    with _init_lock:
+        if _init_done:
+            return
+        from hyvideo.commons.parallel_states import initialize_parallel_state
+        initialize_parallel_state(sp=int(os.environ.get('WORLD_SIZE', '1')))
+        torch.cuda.set_device(int(os.environ.get('LOCAL_RANK', '0')))
+        _init_done = True
 
 
 class HunyuanVideoGenerator:
@@ -22,55 +38,58 @@ class HunyuanVideoGenerator:
         self.config = config
         self.pipe = None
         self._loaded = False
+        self._load_lock = threading.Lock()
 
     def load(self):
-        """Load the pipeline (call once at startup)."""
+        """Load the pipeline (call once at startup). Thread-safe."""
         if self._loaded:
             return
 
-        from hyvideo.pipelines.hunyuan_video_pipeline import HunyuanVideo_1_5_Pipeline
-        from hyvideo.commons.parallel_states import initialize_parallel_state
-        from hyvideo.commons.infer_state import InferState
+        with self._load_lock:
+            if self._loaded:
+                return
 
-        initialize_parallel_state(sp=1)
-        torch.cuda.set_device(0)
+            _ensure_init()
 
-        task = "t2v"
-        transformer_version = HunyuanVideo_1_5_Pipeline.get_transformer_version(
-            self.config.resolution, task, self.config.cfg_distilled, False, False
-        )
+            from hyvideo.pipelines.hunyuan_video_pipeline import HunyuanVideo_1_5_Pipeline
+            from hyvideo.commons.infer_state import InferState
 
-        transformer_dtype = torch.bfloat16
-        device = torch.device("cpu") if self.config.offloading else torch.device("cuda")
-        transformer_init_device = torch.device("cpu")
+            task = "t2v"
+            transformer_version = HunyuanVideo_1_5_Pipeline.get_transformer_version(
+                self.config.resolution, task, self.config.cfg_distilled, False, False
+            )
 
-        logger.info(f"Loading HunyuanVideo pipeline from {self.config.model_path}")
+            transformer_dtype = torch.bfloat16
+            device = torch.device("cpu") if self.config.offloading else torch.device("cuda")
+            transformer_init_device = torch.device("cpu")
 
-        self.pipe = HunyuanVideo_1_5_Pipeline.create_pipeline(
-            pretrained_model_name_or_path=self.config.model_path,
-            transformer_version=transformer_version,
-            create_sr_pipeline=False,
-            transformer_dtype=transformer_dtype,
-            device=device,
-            transformer_init_device=transformer_init_device,
-        )
+            logger.info(f"Loading HunyuanVideo pipeline from {self.config.model_path}")
 
-        offloading_config = HunyuanVideo_1_5_Pipeline.get_offloading_config()
-        enable_group_offloading = offloading_config.get("enable_group_offloading", True)
+            self.pipe = HunyuanVideo_1_5_Pipeline.create_pipeline(
+                pretrained_model_name_or_path=self.config.model_path,
+                transformer_version=transformer_version,
+                create_sr_pipeline=False,
+                transformer_dtype=transformer_dtype,
+                device=device,
+                transformer_init_device=transformer_init_device,
+            )
 
-        infer_state = InferState(
-            enable_cache=False,
-        )
+            offloading_config = HunyuanVideo_1_5_Pipeline.get_offloading_config()
+            enable_group_offloading = offloading_config.get("enable_group_offloading", True)
 
-        self.pipe.apply_infer_optimization(
-            infer_state=infer_state,
-            enable_offloading=self.config.offloading,
-            enable_group_offloading=enable_group_offloading,
-            overlap_group_offloading=self.config.overlap_group_offloading,
-        )
+            infer_state = InferState(
+                enable_cache=False,
+            )
 
-        self._loaded = True
-        logger.info("HunyuanVideo pipeline loaded successfully")
+            self.pipe.apply_infer_optimization(
+                infer_state=infer_state,
+                enable_offloading=self.config.offloading,
+                enable_group_offloading=enable_group_offloading,
+                overlap_group_offloading=self.config.overlap_group_offloading,
+            )
+
+            self._loaded = True
+            logger.info("HunyuanVideo pipeline loaded successfully")
 
     def generate(
         self,

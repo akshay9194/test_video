@@ -143,10 +143,13 @@ class MarketingPipeline:
 
                 elif scene.type == "talking_head":
                     if not request.avatar_image:
+                        # No avatar — convert script text into a visual B-roll prompt
                         fallback_prompt = (
-                            f"A professional speaker in a modern office setting. "
-                            f"Warm lighting, shallow depth of field. Photorealistic style."
+                            f"{scene.script_text} "
+                            f"The camera slowly moves forward. Warm natural lighting. "
+                            f"{request.style} style."
                         )
+                        logger.info(f"[{job_id}] No avatar provided, converting talking_head to broll: '{fallback_prompt[:80]}...'")
                         self.video_gen.generate_for_duration(
                             prompt=fallback_prompt,
                             output_path=clip_path,

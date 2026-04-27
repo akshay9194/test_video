@@ -113,19 +113,29 @@ def format_timings_table(timings: dict) -> str:
 
 pipeline: MarketingPipeline = None
 pipeline_loading = False
+_pipeline_lock = threading.Lock()
 
 
 def ensure_pipeline():
     global pipeline, pipeline_loading
-    if pipeline is not None:
-        return
-    if pipeline_loading:
-        return
-    pipeline_loading = True
-    config = PipelineConfig.from_env()
-    pipeline = MarketingPipeline(config)
-    pipeline.load_models()
-    pipeline_loading = False
+    with _pipeline_lock:
+        if pipeline is not None:
+            return
+        if pipeline_loading:
+            return
+        pipeline_loading = True
+
+    try:
+        config = PipelineConfig.from_env()
+        p = MarketingPipeline(config)
+        p.load_models()
+        with _pipeline_lock:
+            pipeline = p
+            pipeline_loading = False
+    except Exception as e:
+        with _pipeline_lock:
+            pipeline_loading = False
+        raise
 
 
 # --- Gradio Handlers ---
@@ -203,11 +213,6 @@ def refresh_monitor():
 
 with gr.Blocks(
     title="Marketing Video Generator",
-    theme=gr.themes.Soft(),
-    css="""
-    .timing-box textarea { font-family: monospace !important; font-size: 13px !important; }
-    .log-box textarea { font-family: monospace !important; font-size: 12px !important; }
-    """
 ) as demo:
     gr.Markdown("# 🎬 Marketing Video Generator")
     gr.Markdown("Generate complete marketing videos from scripts — with voiceover, captions, and background music.")
@@ -282,9 +287,7 @@ with gr.Blocks(
 
 
 if __name__ == "__main__":
-    # Pre-load pipeline in background
-    threading.Thread(target=ensure_pipeline, daemon=True).start()
-
+    # Pipeline loads on first generate request (not in background — avoids thread race)
     demo.launch(
         server_name="0.0.0.0",
         server_port=7860,
