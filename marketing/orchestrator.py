@@ -174,6 +174,8 @@ class MarketingPipeline:
                             talking_head_success = True
                         except Exception as e:
                             logger.warning(f"[{job_id}] I2V avatar fallback also failed: {e}")
+                            # Force reload T2V
+                            self.video_gen.load(task="t2v")
 
                     if not talking_head_success:
                         fallback_prompt = (
@@ -211,7 +213,9 @@ class MarketingPipeline:
                                 reference_image=ref_image,
                             )
                         except Exception as e:
-                            logger.warning(f"[{job_id}] I2V failed: {e}. Falling back to T2V.")
+                            logger.warning(f"[{job_id}] I2V failed: {e}. Reloading T2V and falling back.")
+                            # Force reload T2V since I2V failure may have corrupted pipeline state
+                            self.video_gen.load(task="t2v")
                             self.video_gen.generate_for_duration(
                                 prompt=f"{scene.video_prompt or ''} {request.style} style.",
                                 output_path=clip_path,

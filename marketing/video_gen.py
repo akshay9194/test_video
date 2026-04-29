@@ -60,10 +60,14 @@ class HunyuanVideoGenerator:
                 logger.info(f"Switching pipeline from {self._current_task} to {task}")
                 del self.pipe
                 self.pipe = None
+                self._loaded = False
                 torch.cuda.empty_cache()
 
+            # cfg_distilled only available for t2v
+            use_cfg_distilled = self.config.cfg_distilled if task == "t2v" else False
+
             transformer_version = HunyuanVideo_1_5_Pipeline.get_transformer_version(
-                self.config.resolution, task, self.config.cfg_distilled, False, False
+                self.config.resolution, task, use_cfg_distilled, False, False
             )
 
             transformer_dtype = torch.bfloat16
