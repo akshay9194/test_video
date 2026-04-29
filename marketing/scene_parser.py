@@ -17,30 +17,40 @@ import openai
 SCENE_PARSER_SYSTEM_PROMPT = """You are a video production assistant. Given a marketing script and optional scene instructions, break the script into a sequence of video scenes.
 
 Each scene must be one of these types:
-- "broll": A visual scene with no speaking. Provide a detailed video generation prompt.
-- "talking_head": A person speaks to camera. Provide the dialogue text.
-- "image_video": Animate a provided image. Provide description of motion.
+- "broll": A visual scene generated from text description. Use when NO reference images are available for this part.
+- "image_video": Animate a provided reference image. Use this whenever a reference image matches the scene content. Provide description of desired motion/animation.
+- "talking_head": A person speaks to camera. ONLY use this if explicitly requested AND an avatar image is confirmed available.
+
+IMPORTANT RULES FOR IMAGE USAGE:
+- When reference images are provided, PREFER "image_video" scenes over "broll" scenes.
+- Match each reference image to the most relevant part of the script.
+- Each image should be used as a scene if possible.
+- Set "image_ref" to the exact filename of the image to use.
+- For image_video, the "video_prompt" should describe MOTION only (the image provides the visuals): camera movement, character actions, animations.
+- Do NOT use "talking_head" unless explicitly told an avatar is available.
 
 Output a JSON array of scenes. Each scene has:
 - "type": "broll" | "talking_head" | "image_video"
 - "duration_sec": estimated duration in seconds (5-15)
-- "script_text": the spoken text (for talking_head) or empty string
-- "video_prompt": detailed visual description for video generation (for broll/image_video)
+- "script_text": the narration text for this scene (voiceover plays over ALL scenes)
+- "video_prompt": detailed visual description for video generation (for broll) OR motion description (for image_video)
 - "image_ref": filename if an image is referenced, else null
 
 Rules:
 - Total duration should match the requested video length
+- Distribute the script text across scenes as narration (every scene gets a portion of the script as voiceover)
 - For broll prompts, follow this formula: Subject + Motion + Scene + Camera Movement + Lighting + Style
+- For image_video prompts, describe motion: "The person gestures with their hand", "The camera slowly zooms in", "Charts animate and numbers increase"
 - Use concrete visual descriptions, not abstract words
 - Camera movements: "The camera slowly moves forward", "The camera pans left", "The camera orbits around"
 - Always end the video prompt with "Photorealistic style." unless a different style is requested
-- Keep talking_head segments short (5-10 seconds each)
 
-Example output:
+Example output with images:
 [
-  {"type": "broll", "duration_sec": 5, "script_text": "", "video_prompt": "A wide aerial shot descending toward a beachfront resort at golden hour. The camera tilts down revealing an infinity pool. Warm golden sunlight. Photorealistic style.", "image_ref": null},
-  {"type": "talking_head", "duration_sec": 5, "script_text": "Welcome to Le Grand Bleu Hotel, where luxury meets the sea.", "video_prompt": "", "image_ref": null},
-  {"type": "broll", "duration_sec": 5, "script_text": "", "video_prompt": "A smooth dolly shot through a hotel suite. White marble floors, king-size bed with rose petals. The camera moves forward toward balcony doors. Warm side lighting. Photorealistic style.", "image_ref": null}
+  {"type": "image_video", "duration_sec": 5, "script_text": "Struggling with low conversions?", "video_prompt": "The man shakes his head slightly, his fingers type on the laptop. The red graph on screen pulses. The camera slowly pushes in toward the screen. Cinematic lighting.", "image_ref": "frustrated_man.jpg"},
+  {"type": "image_video", "duration_sec": 5, "script_text": "Meet BizAgent.ai, your autonomous sales executive.", "video_prompt": "The dashboard metrics animate, bar charts rise, numbers increase. The camera slowly pans right across the curved screen. Blue neon glow.", "image_ref": "dashboard.jpg"},
+  {"type": "image_video", "duration_sec": 5, "script_text": "Sarah handles calls and converts leads around the clock.", "video_prompt": "The holographic woman gestures with her right hand, presenting the floating charts. Subtle holographic flicker. The camera slowly orbits around her.", "image_ref": "sarah_hologram.jpg"},
+  {"type": "image_video", "duration_sec": 5, "script_text": "BizAgent.ai. Your business, on autopilot.", "video_prompt": "The logo subtly pulses with a cyan glow. The camera slowly zooms in. Dark background with soft light rays.", "image_ref": "logo.jpg"}
 ]
 
 Return ONLY the JSON array, no other text."""
@@ -86,12 +96,23 @@ class SceneParser:
             )
             model = self.config.model_name
 
-        image_list = ", ".join(images) if images else "none provided"
+        # Extract just filenames for the LLM (not full paths)
+        if images:
+            image_filenames = [os.path.basename(img) for img in images]
+            image_list = ", ".join(image_filenames)
+            image_instruction = (
+                f"Available reference images: {image_list}\n"
+                f"IMPORTANT: Use 'image_video' type for scenes that match these images. "
+                f"Set 'image_ref' to the exact filename. Prefer image_video over broll when an image matches."
+            )
+        else:
+            image_instruction = "No reference images provided. Use only 'broll' type scenes."
+
         user_prompt = (
             f"Script: {script}\n"
             f"Total video duration: {total_duration_sec} seconds\n"
             f"Style: {style}\n"
-            f"Available images: {image_list}\n"
+            f"{image_instruction}\n"
             f"Break this into scenes."
         )
 
