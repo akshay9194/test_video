@@ -78,9 +78,9 @@ class MarketingPipeline:
         self.video_gen = HunyuanVideoGenerator(self.config.video_gen)
 
     def load_models(self):
-        """Pre-load heavy models (call at startup)."""
-        logger.info("Loading video generation model...")
-        self.video_gen.load()
+        """Pre-load T2V model (call at startup). I2V loads on demand."""
+        logger.info("Loading video generation model (T2V)...")
+        self.video_gen.load(task="t2v")
         logger.info("All models ready")
 
     async def generate(self, request: VideoRequest) -> VideoResult:
@@ -154,7 +154,26 @@ class MarketingPipeline:
                             )
                             talking_head_success = True
                         except Exception as e:
-                            logger.warning(f"[{job_id}] Talking head failed: {e}. Falling back to B-roll.")
+                            logger.warning(f"[{job_id}] Talking head failed: {e}. Trying I2V fallback.")
+
+                    if not talking_head_success and request.avatar_image:
+                        # Try I2V: animate the avatar image with motion
+                        try:
+                            motion_prompt = (
+                                f"A person in a corporate setting speaks to the camera and gestures with their hands. "
+                                f"{scene.script_text} Warm lighting, shallow depth of field. {request.style} style."
+                            )
+                            self.video_gen.generate_for_duration(
+                                prompt=motion_prompt,
+                                output_path=clip_path,
+                                duration_sec=scene.duration_sec,
+                                aspect_ratio=request.aspect_ratio,
+                                seed=request.seed + i,
+                                reference_image=request.avatar_image,
+                            )
+                            talking_head_success = True
+                        except Exception as e:
+                            logger.warning(f"[{job_id}] I2V avatar fallback also failed: {e}")
 
                     if not talking_head_success:
                         fallback_prompt = (
@@ -178,17 +197,36 @@ class MarketingPipeline:
                             if os.path.basename(img) == scene.image_ref:
                                 ref_image = img
                                 break
-                        if not ref_image and request.images:
-                            ref_image = request.images[0]
+                    if not ref_image and request.images:
+                        ref_image = request.images[0]
 
-                    self.video_gen.generate_for_duration(
-                        prompt=scene.video_prompt or "The camera slowly pans across the scene.",
-                        output_path=clip_path,
-                        duration_sec=scene.duration_sec,
-                        aspect_ratio=request.aspect_ratio,
-                        seed=request.seed + i,
-                        reference_image=ref_image,
-                    )
+                    if ref_image:
+                        try:
+                            self.video_gen.generate_for_duration(
+                                prompt=scene.video_prompt or "The camera slowly pans across the scene.",
+                                output_path=clip_path,
+                                duration_sec=scene.duration_sec,
+                                aspect_ratio=request.aspect_ratio,
+                                seed=request.seed + i,
+                                reference_image=ref_image,
+                            )
+                        except Exception as e:
+                            logger.warning(f"[{job_id}] I2V failed: {e}. Falling back to T2V.")
+                            self.video_gen.generate_for_duration(
+                                prompt=f"{scene.video_prompt or ''} {request.style} style.",
+                                output_path=clip_path,
+                                duration_sec=scene.duration_sec,
+                                aspect_ratio=request.aspect_ratio,
+                                seed=request.seed + i,
+                            )
+                    else:
+                        self.video_gen.generate_for_duration(
+                            prompt=f"{scene.video_prompt or 'The camera slowly pans across the scene.'} {request.style} style.",
+                            output_path=clip_path,
+                            duration_sec=scene.duration_sec,
+                            aspect_ratio=request.aspect_ratio,
+                            seed=request.seed + i,
+                        )
 
                 clip_paths.append(clip_path)
                 scene_elapsed = round(time.time() - scene_start, 1)

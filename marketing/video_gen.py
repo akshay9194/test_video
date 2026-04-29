@@ -32,21 +32,22 @@ def _ensure_init():
 
 
 class HunyuanVideoGenerator:
-    """Wraps HunyuanVideo-1.5 pipeline for programmatic use."""
+    """Wraps HunyuanVideo-1.5 pipeline for programmatic use. Supports T2V and I2V."""
 
     def __init__(self, config):
         self.config = config
         self.pipe = None
+        self._current_task = None  # "t2v" or "i2v"
         self._loaded = False
         self._load_lock = threading.Lock()
 
-    def load(self):
-        """Load the pipeline (call once at startup). Thread-safe."""
-        if self._loaded:
+    def load(self, task="t2v"):
+        """Load the pipeline for a specific task. Thread-safe. Reloads if task changes."""
+        if self._loaded and self._current_task == task:
             return
 
         with self._load_lock:
-            if self._loaded:
+            if self._loaded and self._current_task == task:
                 return
 
             _ensure_init()
@@ -54,7 +55,13 @@ class HunyuanVideoGenerator:
             from hyvideo.pipelines.hunyuan_video_pipeline import HunyuanVideo_1_5_Pipeline
             from hyvideo.commons.infer_state import InferState
 
-            task = "t2v"
+            # Free previous pipeline if switching tasks
+            if self.pipe is not None:
+                logger.info(f"Switching pipeline from {self._current_task} to {task}")
+                del self.pipe
+                self.pipe = None
+                torch.cuda.empty_cache()
+
             transformer_version = HunyuanVideo_1_5_Pipeline.get_transformer_version(
                 self.config.resolution, task, self.config.cfg_distilled, False, False
             )
@@ -63,7 +70,7 @@ class HunyuanVideoGenerator:
             device = torch.device("cpu") if self.config.offloading else torch.device("cuda")
             transformer_init_device = torch.device("cpu")
 
-            logger.info(f"Loading HunyuanVideo pipeline from {self.config.model_path}")
+            logger.info(f"Loading HunyuanVideo pipeline ({task}) from {self.config.model_path}")
 
             self.pipe = HunyuanVideo_1_5_Pipeline.create_pipeline(
                 pretrained_model_name_or_path=self.config.model_path,
@@ -88,8 +95,9 @@ class HunyuanVideoGenerator:
                 overlap_group_offloading=self.config.overlap_group_offloading,
             )
 
+            self._current_task = task
             self._loaded = True
-            logger.info("HunyuanVideo pipeline loaded successfully")
+            logger.info(f"HunyuanVideo pipeline ({task}) loaded successfully")
 
     def generate(
         self,
@@ -102,7 +110,9 @@ class HunyuanVideoGenerator:
         reference_image: str = None,
     ) -> str:
         """Generate a video clip. Returns path to the output mp4."""
-        if not self._loaded:
+        # Determine task based on whether reference image is provided
+        task = "i2v" if reference_image else "t2v"
+        if not self._loaded or self._current_task != task:
             self.load()
 
         import einops
