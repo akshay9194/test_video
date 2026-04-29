@@ -113,7 +113,7 @@ class HunyuanVideoGenerator:
         # Determine task based on whether reference image is provided
         task = "i2v" if reference_image else "t2v"
         if not self._loaded or self._current_task != task:
-            self.load()
+            self.load(task)
 
         import einops
         import imageio
