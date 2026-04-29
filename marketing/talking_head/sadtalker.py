@@ -5,7 +5,10 @@ SadTalker: https://github.com/OpenTalker/SadTalker
 Setup:
   git clone https://github.com/OpenTalker/SadTalker.git /workspace/sadtalker
   cd /workspace/sadtalker
+  python3 -m venv venv
+  source venv/bin/activate
   pip install -r requirements.txt
+  pip install numpy==1.26.4
   bash scripts/download_models.sh
 """
 
@@ -21,6 +24,10 @@ class SadTalkerLocal(BaseTalkingHead):
     def __init__(self, config):
         self.checkpoint_dir = config.sadtalker_checkpoint_dir
         self.sadtalker_dir = os.path.dirname(self.checkpoint_dir)
+        # Use SadTalker's own venv python if available, otherwise fall back to system
+        self.python_path = os.path.join(self.sadtalker_dir, "venv", "bin", "python")
+        if not os.path.exists(self.python_path):
+            self.python_path = sys.executable
 
     def _check_installation(self):
         if not os.path.exists(self.sadtalker_dir):
@@ -29,7 +36,10 @@ class SadTalkerLocal(BaseTalkingHead):
                 f"Install it:\n"
                 f"  git clone https://github.com/OpenTalker/SadTalker.git {self.sadtalker_dir}\n"
                 f"  cd {self.sadtalker_dir}\n"
+                f"  python3 -m venv venv\n"
+                f"  source venv/bin/activate\n"
                 f"  pip install -r requirements.txt\n"
+                f"  pip install numpy==1.26.4\n"
                 f"  bash scripts/download_models.sh"
             )
 
@@ -42,7 +52,7 @@ class SadTalkerLocal(BaseTalkingHead):
         logger.info(f"SadTalker: Generating talking head from {image_path} + {audio_path}")
 
         cmd = [
-            sys.executable,
+            self.python_path,
             os.path.join(self.sadtalker_dir, "inference.py"),
             "--driven_audio", audio_path,
             "--source_image", image_path,
