@@ -142,28 +142,33 @@ class MarketingPipeline:
                     )
 
                 elif scene.type == "talking_head":
-                    if not request.avatar_image:
-                        # No avatar — convert script text into a visual B-roll prompt
+                    talking_head_success = False
+                    if request.avatar_image:
+                        try:
+                            scene_audio = os.path.join(job_dir, f"scene_{i:02d}_audio.wav")
+                            await self.tts.synthesize(scene.script_text, scene_audio, voice=request.voice)
+                            await self.talking_head.generate(
+                                image_path=request.avatar_image,
+                                audio_path=scene_audio,
+                                output_path=clip_path,
+                            )
+                            talking_head_success = True
+                        except Exception as e:
+                            logger.warning(f"[{job_id}] Talking head failed: {e}. Falling back to B-roll.")
+
+                    if not talking_head_success:
                         fallback_prompt = (
                             f"{scene.script_text} "
                             f"The camera slowly moves forward. Warm natural lighting. "
                             f"{request.style} style."
                         )
-                        logger.info(f"[{job_id}] No avatar provided, converting talking_head to broll: '{fallback_prompt[:80]}...'")
+                        logger.info(f"[{job_id}] Using B-roll fallback for talking_head scene")
                         self.video_gen.generate_for_duration(
                             prompt=fallback_prompt,
                             output_path=clip_path,
                             duration_sec=scene.duration_sec,
                             aspect_ratio=request.aspect_ratio,
                             seed=request.seed + i,
-                        )
-                    else:
-                        scene_audio = os.path.join(job_dir, f"scene_{i:02d}_audio.wav")
-                        await self.tts.synthesize(scene.script_text, scene_audio, voice=request.voice)
-                        await self.talking_head.generate(
-                            image_path=request.avatar_image,
-                            audio_path=scene_audio,
-                            output_path=clip_path,
                         )
 
                 elif scene.type == "image_video":
